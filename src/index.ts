@@ -130,7 +130,7 @@ export default {
         </head>
         <body>
           <h1>Tablero de Comentarios</h1>
-           <img src="/imagenes/imagenprueba1.jpg" alt="Logo de la App" style="max-width: 200px; display: block; margin: 0 auto 20px;">
+           <img src="/imagenprueba1.jpg" alt="Logo de la App" style="max-width: 200px; display: block; margin: 0 auto 20px;">
           <p><a href="/admin" style="color: #666; font-size: 0.9em;">(¿Admin? Haz clic aquí)</a></p>
           
           ${message ? `<div class="message">${message}</div>` : ''}
