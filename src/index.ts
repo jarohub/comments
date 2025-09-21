@@ -3,8 +3,41 @@ export default {
     const url = new URL(request.url);
     const { pathname } = url;
     const ADMIN_PASSWORD = 'admin123';  // CHANGE THIS! For demo only.
-    const MAX_NAME_LENGTH = 50;  // Server-side limit for security
-    const MAX_COMMENT_LENGTH = 500;  // Server-side limit for security
+    const MAX_NAME_LENGTH = 50;
+    const MAX_COMMENT_LENGTH = 500;
+    const MODEL_ID = '@cf/meta/llama-2-7b-chat-int8';  // Modelo ligero para moderación
+
+    // Helper: Moderación con Workers AI
+    async function moderateComment(commentText) {
+      if (!env.AI) {
+        console.warn('Workers AI no disponible');
+        return { success: true, reason: 'AI no configurado (fallback)' };  // Permite si no hay AI
+      }
+
+      const prompt = {
+        messages: [
+          {
+            role: 'system',
+            content: 'Eres un moderador estricto. Clasifica este comentario como "safe" (apropiado, sin spam/ofensas/odios/publicidad) o "unsafe" (inapropiado, con lenguaje ofensivo, spam, etc.). Responde SOLO con: {"safe": true/false, "reason": "explicación breve"}. No agregues más texto.'
+          },
+          {
+            role: 'user',
+            content: commentText
+          }
+        ],
+        max_tokens: 100,  // Limita output
+        temperature: 0.1  // Bajo para consistencia
+      };
+
+      try {
+        const response = await env.AI.run(MODEL_ID, prompt);
+        const moderation = JSON.parse(response.response);  // Espera JSON del modelo
+        return { success: moderation.safe, reason: moderation.reason || 'Moderación AI' };
+      } catch (error) {
+        console.error('Error en AI moderación:', error);
+        return { success: true, reason: 'Error AI (fallback)' };  // Permite en error
+      }
+    }
 
     // Helper: Relative time in Spanish
     function formatRelativeTime(dateStr) {
@@ -49,7 +82,7 @@ export default {
       return results[0] ? { ...results[0], relative_time: formatRelativeTime(results[0].created_at) } : null;
     }
 
-    // Helper: Public HTML (no Turnstile)
+    // Helper: Public HTML (unchanged)
     function generatePublicHTML(comments, message = '', isError = false) {
       const commentsList = comments.map(c => `
         <div class="comment">
@@ -204,20 +237,28 @@ export default {
           return new Response(html, { status: 400, headers: { 'Content-Type': 'text/html; charset=utf-8' } });
         }
 
-        // Server-side length limits for security (prevent oversized inputs)
+        // Server-side length limits
         if (name.length > MAX_NAME_LENGTH || comment.length > MAX_COMMENT_LENGTH) {
           const comments = await getComments();
           const html = generatePublicHTML(comments, `El nombre debe tener máximo ${MAX_NAME_LENGTH} caracteres y el comentario ${MAX_COMMENT_LENGTH}.`, true);
           return new Response(html, { status: 400, headers: { 'Content-Type': 'text/html; charset=utf-8' } });
         }
 
-        // Prepared statement prevents SQL injection (D1/SQLite safe)
+        // Moderación AI para comentarios públicos
+        const moderation = await moderateComment(comment);
+        if (!moderation.success) {
+          const comments = await getComments();
+          const html = generatePublicHTML(comments, `Comentario rechazado por moderación: ${moderation.reason}. Por favor, usa lenguaje apropiado.`, true);
+          return new Response(html, { status: 400, headers: { 'Content-Type': 'text/html; charset=utf-8' } });
+        }
+
+        // Prepared statement prevents SQL injection
         await env.DB.prepare('INSERT INTO comments (name, comment) VALUES (?, ?)').bind(name, comment).run();
         return Response.redirect(new URL('/', request.url), 303);
       }
     }
 
-    // Admin Routes (unchanged)
+    // Admin Routes
     if (pathname.startsWith('/admin')) {
       const cookies = request.headers.get('Cookie') ? new URLSearchParams(request.headers.get('Cookie')) : new URLSearchParams();
       const authenticated = isAuthenticated(cookies);
@@ -275,7 +316,7 @@ export default {
         return new Response(html, { headers: { 'Content-Type': 'text/html; charset=utf-8' } });
       }
 
-      // Edit POST
+      // Edit POST (con moderación opcional para admin - aquí la salto por ser admin)
       if (pathname.match(/^\/admin\/(\d+)\/edit$/) && request.method === 'POST') {
         const id = pathname.split('/')[2];
         const formData = await request.formData();
@@ -289,11 +330,20 @@ export default {
           return new Response(html, { status: 400, headers: { 'Content-Type': 'text/html; charset=utf-8' } });
         }
 
-        // Server-side length limits for security (same as public)
+        // Server-side length limits
         if (name.length > MAX_NAME_LENGTH || commentText.length > MAX_COMMENT_LENGTH) {
           const comment = await getCommentById(id);
           if (!comment) return new Response('No encontrado', { status: 404 });
           const html = generateEditHTML(comment, `El nombre debe tener máximo ${MAX_NAME_LENGTH} caracteres y el comentario ${MAX_COMMENT_LENGTH}.`, true);
+          return new Response(html, { status: 400, headers: { 'Content-Type': 'text/html; charset=utf-8' } });
+        }
+
+        // Moderación AI para ediciones (opcional: comenta si quieres saltarla en admin)
+        const moderation = await moderateComment(commentText);
+        if (!moderation.success) {
+          const comment = await getCommentById(id);
+          if (!comment) return new Response('No encontrado', { status: 404 });
+          const html = generateEditHTML(comment, `Edición rechazada por moderación: ${moderation.reason}.`, true);
           return new Response(html, { status: 400, headers: { 'Content-Type': 'text/html; charset=utf-8' } });
         }
 
