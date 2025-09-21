@@ -1,0 +1,16 @@
+{
+  "compatibility_date": "2025-04-01",
+  "main": "src/index.ts",
+  "name": "comments",
+  "upload_source_maps": true,
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_id": "eaa0ff16-b9d7-4b1f-8142-b4a51f715da6",
+      "database_name": "comments-database"
+    }
+  ],
+  "observability": {
+    "enabled": true
+  }
+}
