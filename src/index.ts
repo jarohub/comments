@@ -148,7 +148,7 @@ export default {
           <h2>Comentarios (${comments.length})</h2>
           ${commentsList || '<p>Aún no hay comentarios. ¡Sé el primero!</p>'}
 
-          <img src="/imagenes/imagenprueba2.jpg" alt="Logo de la App" style="max-width: 200px; display: block; margin: 0 auto 20px;">
+          
         </body>
         </html>
       `;
