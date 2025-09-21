@@ -2,48 +2,63 @@ export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     const { pathname } = url;
-    const ADMIN_PASSWORD = 'admin123';  // CHANGE THIS! For demo only. Use hashing in prod (e.g., bcrypt via Worker).
+    const ADMIN_PASSWORD = 'admin123';  // CHANGE THIS! For demo only.
 
-    // Helper: Check if user is authenticated (via cookie)
-    function isAuthenticated(cookies) {
-      // Simple: Check for 'admin_session' cookie matching hashed password (base64 for demo)
-      const session = cookies.get('admin_session');
-      return session === btoa(ADMIN_PASSWORD);  // Base64 "hash"—insecure; replace with proper hash.
+    // Helper: Relative time in Spanish
+    function formatRelativeTime(dateStr) {
+      const now = new Date();
+      const date = new Date(dateStr);
+      const diff = now - date;  // ms
+      const seconds = Math.floor(diff / 1000);
+      const minutes = Math.floor(seconds / 60);
+      const hours = Math.floor(minutes / 60);
+      const days = Math.floor(hours / 24);
+      const years = Math.floor(days / 365);
+
+      if (years > 0) return `hace ${years} ${years === 1 ? 'año' : 'años'}`;
+      if (days > 0) return `hace ${days} ${days === 1 ? 'día' : 'días'}`;
+      if (hours > 0) return `hace ${hours} ${hours === 1 ? 'hora' : 'horas'}`;
+      if (minutes > 0) return `hace ${minutes} ${minutes === 1 ? 'minuto' : 'minutos'}`;
+      return 'hace unos segundos';
     }
 
-    // Helper: Set auth cookie
+    // Helper: Auth (unchanged)
+    function isAuthenticated(cookies) {
+      const session = cookies.get('admin_session');
+      return session === btoa(ADMIN_PASSWORD);
+    }
+
     function setAuthCookie() {
       const headers = new Headers();
-      headers.set('Set-Cookie', `admin_session=${btoa(ADMIN_PASSWORD)}; HttpOnly; Secure; SameSite=Strict; Max-Age=3600`);  // 1 hour
+      headers.set('Set-Cookie', `admin_session=${btoa(ADMIN_PASSWORD)}; HttpOnly; Secure; SameSite=Strict; Max-Age=3600`);
       return headers;
     }
 
-    // Helper: Fetch all comments from D1
+    // Helper: Fetch comments (with formatted time)
     async function getComments() {
       const { results } = await env.DB.prepare(
         'SELECT * FROM comments ORDER BY created_at DESC'
       ).all();
-      return results;
+      return results.map(c => ({ ...c, relative_time: formatRelativeTime(c.created_at) }));
     }
 
-    // Helper: Get single comment by ID
     async function getCommentById(id) {
       const { results } = await env.DB.prepare('SELECT * FROM comments WHERE id = ?').bind(id).all();
-      return results[0] || null;
+      return results[0] ? { ...results[0], relative_time: formatRelativeTime(results[0].created_at) } : null;
     }
 
-    // Helper: Generate Public HTML page (unchanged from before)
+    // Helper: Public HTML (no Turnstile)
     function generatePublicHTML(comments, message = '', isError = false) {
       const commentsList = comments.map(c => `
         <div class="comment">
-          <strong>${c.name}</strong> (${new Date(c.created_at).toLocaleString()})<br>
+          <strong>${c.name}</strong> (${c.relative_time})<br>
           ${c.comment}
         </div>
       `).join('');
 
       return `
         <!DOCTYPE html>
-        <html lang="en">
+        <html lang="es">
         <head>
           <meta charset="UTF-8">
           <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -58,38 +73,38 @@ export default {
           </style>
         </head>
         <body>
-          <h1>Comment Board</h1>
-          <p><a href="/admin" style="color: #666; font-size: 0.9em;">(Admin? Click here)</a></p>  <!-- Hint for access -->
+          <h1>Tablero de Comentarios</h1>
+          <p><a href="/admin" style="color: #666; font-size: 0.9em;">(¿Admin? Haz clic aquí)</a></p>
           
           ${message ? `<div class="message">${message}</div>` : ''}
           
           <form method="POST" action="/comments">
-            <label for="name">Name:</label><br>
+            <label for="name">Nombre:</label><br>
             <input type="text" id="name" name="name" required maxlength="50">
             
-            <label for="comment">Comment:</label><br>
+            <label for="comment">Comentario:</label><br>
             <textarea id="comment" name="comment" rows="4" required maxlength="500"></textarea><br>
             
-            <button type="submit">Add Comment</button>
+            <button type="submit">Añadir Comentario</button>
           </form>
           
-          <h2>Comments (${comments.length})</h2>
-          ${commentsList || '<p>No comments yet. Be the first!</p>'}
+          <h2>Comentarios (${comments.length})</h2>
+          ${commentsList || '<p>Aún no hay comentarios. ¡Sé el primero!</p>'}
         </body>
         </html>
       `;
     }
 
-    // Helper: Generate Admin HTML (list view)
+    // Helper: Admin HTML (with relative time)
     function generateAdminHTML(comments, message = '', isError = false) {
       const commentsList = comments.map(c => `
         <div class="comment">
-          <strong>${c.name}</strong> (${new Date(c.created_at).toLocaleString()})<br>
+          <strong>${c.name}</strong> (${c.relative_time})<br>
           ${c.comment}
           <div style="margin-top: 10px;">
-            <a href="/admin/${c.id}/edit" style="color: #0066cc; text-decoration: none; margin-right: 10px;">Edit</a>
-            <form method="POST" action="/admin/${c.id}/delete" style="display: inline;" onsubmit="return confirm('Delete this comment?');">
-              <button type="submit" style="background: #dc3545; color: white; border: none; padding: 5px 10px; cursor: pointer;">Delete</button>
+            <a href="/admin/${c.id}/edit" style="color: #0066cc; text-decoration: none; margin-right: 10px;">Editar</a>
+            <form method="POST" action="/admin/${c.id}/delete" style="display: inline;" onsubmit="return confirm('¿Eliminar este comentario?');">
+              <button type="submit" style="background: #dc3545; color: white; border: none; padding: 5px 10px; cursor: pointer;">Eliminar</button>
             </form>
           </div>
         </div>
@@ -97,11 +112,11 @@ export default {
 
       return `
         <!DOCTYPE html>
-        <html lang="en">
+        <html lang="es">
         <head>
           <meta charset="UTF-8">
           <meta name="viewport" content="width=device-width, initial-scale=1.0">
-          <title>Admin Panel - Comments</title>
+          <title>Panel Admin - Comentarios</title>
           <style>
             body { font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; }
             .comment { border: 1px solid #ddd; padding: 15px; margin: 10px 0; border-radius: 5px; }
@@ -113,30 +128,31 @@ export default {
           </style>
         </head>
         <body>
-          <h1>Admin Panel</h1>
-          <p><a href="/" class="logout">Back to Public Page</a> | 
+          <h1>Panel de Administración</h1>
+          <p><a href="/" class="logout">Volver a Página Pública</a> | 
              <form method="POST" action="/admin/logout" style="display: inline;">
-               <button type="submit" class="logout">Logout</button>
+               <button type="submit" class="logout">Cerrar Sesión</button>
              </form></p>
           
           ${message ? `<div class="message">${message}</div>` : ''}
           
-          <h2>All Comments (${comments.length})</h2>
-          ${commentsList || '<p>No comments.</p>'}
+          <h2>Todos los Comentarios (${comments.length})</h2>
+          ${commentsList || '<p>No hay comentarios.</p>'}
         </body>
         </html>
       `;
     }
 
-    // Helper: Generate Edit HTML
+    // Helper: Edit HTML (with relative time)
     function generateEditHTML(comment, message = '', isError = false) {
+      const createdInfo = `(Creado: ${comment.relative_time})`;
       return `
         <!DOCTYPE html>
-        <html lang="en">
+        <html lang="es">
         <head>
           <meta charset="UTF-8">
           <meta name="viewport" content="width=device-width, initial-scale=1.0">
-          <title>Edit Comment</title>
+          <title>Editar Comentario</title>
           <style>
             body { font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; }
             input, textarea { width: 100%; padding: 8px; margin: 8px 0; }
@@ -146,27 +162,28 @@ export default {
           </style>
         </head>
         <body>
-          <h1>Edit Comment</h1>
-          <p><a href="/admin">Back to Admin</a></p>
+          <h1>Editar Comentario</h1>
+          <p><a href="/admin">Volver a Admin</a></p>
           
           ${message ? `<div class="message">${message}</div>` : ''}
           
+          <p><em>${createdInfo}</em></p>
           <form method="POST" action="/admin/${comment.id}/edit">
-            <label for="name">Name:</label><br>
+            <label for="name">Nombre:</label><br>
             <input type="text" id="name" name="name" value="${comment.name || ''}" required maxlength="50">
             
-            <label for="comment">Comment:</label><br>
+            <label for="comment">Comentario:</label><br>
             <textarea id="comment" name="comment" rows="4" required maxlength="500">${comment.comment || ''}</textarea><br>
             
-            <button type="submit">Update Comment</button>
-            <a href="/admin"><button type="button" class="cancel">Cancel</button></a>
+            <button type="submit">Actualizar Comentario</button>
+            <a href="/admin"><button type="button" class="cancel">Cancelar</button></a>
           </form>
         </body>
         </html>
       `;
     }
 
-    // Public Routes (unchanged)
+    // Public Routes
     if (pathname === '/' || pathname === '/comments') {
       if (request.method === 'GET') {
         const comments = await getComments();
@@ -181,7 +198,7 @@ export default {
 
         if (!name || !comment) {
           const comments = await getComments();
-          const html = generatePublicHTML(comments, 'Please provide both name and comment.', true);
+          const html = generatePublicHTML(comments, 'Por favor, proporciona nombre y comentario.', true);
           return new Response(html, { status: 400, headers: { 'Content-Type': 'text/html; charset=utf-8' } });
         }
 
@@ -190,72 +207,65 @@ export default {
       }
     }
 
-    // Admin Routes
+    // Admin Routes (unchanged)
     if (pathname.startsWith('/admin')) {
       const cookies = request.headers.get('Cookie') ? new URLSearchParams(request.headers.get('Cookie')) : new URLSearchParams();
       const authenticated = isAuthenticated(cookies);
 
-      // Logout: Clear cookie
       if (pathname === '/admin/logout' && request.method === 'POST') {
         const headers = new Headers();
         headers.set('Set-Cookie', 'admin_session=; HttpOnly; Secure; SameSite=Strict; Max-Age=0');
-        return new Response('Logged out', { status: 200, headers });
+        return new Response('Sesión cerrada', { status: 200, headers });
       }
 
-      // Auth check: If not authenticated, show login form
       if (!authenticated && request.method === 'GET') {
         return new Response(`
           <!DOCTYPE html>
-          <html lang="en">
-          <head><title>Admin Login</title></head>
+          <html lang="es">
+          <head><title>Login Admin</title></head>
           <body>
-            <h1>Enter Admin Password</h1>
+            <h1>Contraseña de Admin</h1>
             <form method="POST" action="/admin">
               <input type="password" name="password" required>
-              <button type="submit">Login</button>
+              <button type="submit">Entrar</button>
             </form>
-            <p><a href="/">Back to Comments</a></p>
+            <p><a href="/">Volver a Comentarios</a></p>
           </body>
           </html>
         `, { headers: { 'Content-Type': 'text/html; charset=utf-8' } });
       }
 
-      // Handle login POST
       if (pathname === '/admin' && request.method === 'POST' && !authenticated) {
         const formData = await request.formData();
         const password = formData.get('password');
         if (password !== ADMIN_PASSWORD) {
-          return new Response('Invalid password. <a href="/admin">Try again</a>', { status: 401 });
+          return new Response('Contraseña inválida. <a href="/admin">Intenta de nuevo</a>', { status: 401 });
         }
         const headers = setAuthCookie();
-        return new Response(null, { status: 303, headers: { ...headers, ...Object.fromEntries(headers) }, redirect: '/admin' });
+        return Response.redirect('/admin', 303);
       }
 
-      // If authenticated, handle admin actions
       if (!authenticated) {
-        return new Response('Unauthorized', { status: 401 });
+        return new Response('No autorizado', { status: 401 });
       }
 
-      // GET /admin: Show panel
+      // GET /admin
       if (pathname === '/admin' && request.method === 'GET') {
         const comments = await getComments();
         const html = generateAdminHTML(comments);
-        const headers = new Headers({ 'Content-Type': 'text/html; charset=utf-8' });
-        return new Response(html, { headers });
+        return new Response(html, { headers: { 'Content-Type': 'text/html; charset=utf-8' } });
       }
 
-      // GET /admin/:id/edit: Show edit form
+      // Edit GET
       if (pathname.match(/^\/admin\/(\d+)\/edit$/) && request.method === 'GET') {
         const id = pathname.split('/')[2];
         const comment = await getCommentById(id);
-        if (!comment) {
-          return new Response('Comment not found', { status: 404 });
-        }
+        if (!comment) return new Response('Comentario no encontrado', { status: 404 });
         const html = generateEditHTML(comment);
         return new Response(html, { headers: { 'Content-Type': 'text/html; charset=utf-8' } });
       }
 
-      // POST /admin/:id/edit: Update comment
+      // Edit POST
       if (pathname.match(/^\/admin\/(\d+)\/edit$/) && request.method === 'POST') {
         const id = pathname.split('/')[2];
         const formData = await request.formData();
@@ -264,27 +274,25 @@ export default {
 
         if (!name || !commentText) {
           const comment = await getCommentById(id);
-          if (!comment) return new Response('Not found', { status: 404 });
-          const html = generateEditHTML(comment, 'Please provide both fields.', true);
+          if (!comment) return new Response('No encontrado', { status: 404 });
+          const html = generateEditHTML(comment, 'Por favor, proporciona ambos campos.', true);
           return new Response(html, { status: 400, headers: { 'Content-Type': 'text/html; charset=utf-8' } });
         }
 
         await env.DB.prepare('UPDATE comments SET name = ?, comment = ? WHERE id = ?').bind(name, commentText, id).run();
-        return Response.redirect(new URL('/admin', request.url), 303);
+        return Response.redirect('/admin', 303);
       }
 
-      // POST /admin/:id/delete: Delete comment
+      // Delete POST
       if (pathname.match(/^\/admin\/(\d+)\/delete$/) && request.method === 'POST') {
         const id = pathname.split('/')[2];
         await env.DB.prepare('DELETE FROM comments WHERE id = ?').bind(id).run();
-        return Response.redirect(new URL('/admin', request.url), 303);
+        return Response.redirect('/admin', 303);
       }
 
-      // Unauthorized or invalid admin path
-      return new Response('Forbidden', { status: 403 });
+      return new Response('Prohibido', { status: 403 });
     }
 
-    // 404
-    return new Response('Not Found', { status: 404 });
+    return new Response('No encontrado', { status: 404 });
   },
 };
