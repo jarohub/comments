@@ -3,6 +3,8 @@ export default {
     const url = new URL(request.url);
     const { pathname } = url;
     const ADMIN_PASSWORD = 'admin123';  // CHANGE THIS! For demo only.
+    const MAX_NAME_LENGTH = 50;  // Server-side limit for security
+    const MAX_COMMENT_LENGTH = 500;  // Server-side limit for security
 
     // Helper: Relative time in Spanish
     function formatRelativeTime(dateStr) {
@@ -80,10 +82,10 @@ export default {
           
           <form method="POST" action="/comments">
             <label for="name">Nombre:</label><br>
-            <input type="text" id="name" name="name" required maxlength="50">
+            <input type="text" id="name" name="name" required maxlength="${MAX_NAME_LENGTH}">
             
             <label for="comment">Comentario:</label><br>
-            <textarea id="comment" name="comment" rows="4" required maxlength="500"></textarea><br>
+            <textarea id="comment" name="comment" rows="4" required maxlength="${MAX_COMMENT_LENGTH}"></textarea><br>
             
             <button type="submit">Añadir Comentario</button>
           </form>
@@ -170,10 +172,10 @@ export default {
           <p><em>${createdInfo}</em></p>
           <form method="POST" action="/admin/${comment.id}/edit">
             <label for="name">Nombre:</label><br>
-            <input type="text" id="name" name="name" value="${comment.name || ''}" required maxlength="50">
+            <input type="text" id="name" name="name" value="${comment.name || ''}" required maxlength="${MAX_NAME_LENGTH}">
             
             <label for="comment">Comentario:</label><br>
-            <textarea id="comment" name="comment" rows="4" required maxlength="500">${comment.comment || ''}</textarea><br>
+            <textarea id="comment" name="comment" rows="4" required maxlength="${MAX_COMMENT_LENGTH}">${comment.comment || ''}</textarea><br>
             
             <button type="submit">Actualizar Comentario</button>
             <a href="/admin"><button type="button" class="cancel">Cancelar</button></a>
@@ -193,8 +195,8 @@ export default {
 
       if (request.method === 'POST') {
         const formData = await request.formData();
-        const name = formData.get('name')?.trim();
-        const comment = formData.get('comment')?.trim();
+        let name = formData.get('name')?.trim();
+        let comment = formData.get('comment')?.trim();
 
         if (!name || !comment) {
           const comments = await getComments();
@@ -202,6 +204,14 @@ export default {
           return new Response(html, { status: 400, headers: { 'Content-Type': 'text/html; charset=utf-8' } });
         }
 
+        // Server-side length limits for security (prevent oversized inputs)
+        if (name.length > MAX_NAME_LENGTH || comment.length > MAX_COMMENT_LENGTH) {
+          const comments = await getComments();
+          const html = generatePublicHTML(comments, `El nombre debe tener máximo ${MAX_NAME_LENGTH} caracteres y el comentario ${MAX_COMMENT_LENGTH}.`, true);
+          return new Response(html, { status: 400, headers: { 'Content-Type': 'text/html; charset=utf-8' } });
+        }
+
+        // Prepared statement prevents SQL injection (D1/SQLite safe)
         await env.DB.prepare('INSERT INTO comments (name, comment) VALUES (?, ?)').bind(name, comment).run();
         return Response.redirect(new URL('/', request.url), 303);
       }
@@ -269,8 +279,8 @@ export default {
       if (pathname.match(/^\/admin\/(\d+)\/edit$/) && request.method === 'POST') {
         const id = pathname.split('/')[2];
         const formData = await request.formData();
-        const name = formData.get('name')?.trim();
-        const commentText = formData.get('comment')?.trim();
+        let name = formData.get('name')?.trim();
+        let commentText = formData.get('comment')?.trim();
 
         if (!name || !commentText) {
           const comment = await getCommentById(id);
@@ -279,6 +289,15 @@ export default {
           return new Response(html, { status: 400, headers: { 'Content-Type': 'text/html; charset=utf-8' } });
         }
 
+        // Server-side length limits for security (same as public)
+        if (name.length > MAX_NAME_LENGTH || commentText.length > MAX_COMMENT_LENGTH) {
+          const comment = await getCommentById(id);
+          if (!comment) return new Response('No encontrado', { status: 404 });
+          const html = generateEditHTML(comment, `El nombre debe tener máximo ${MAX_NAME_LENGTH} caracteres y el comentario ${MAX_COMMENT_LENGTH}.`, true);
+          return new Response(html, { status: 400, headers: { 'Content-Type': 'text/html; charset=utf-8' } });
+        }
+
+        // Prepared statement prevents SQL injection
         await env.DB.prepare('UPDATE comments SET name = ?, comment = ? WHERE id = ?').bind(name, commentText, id).run();
         return Response.redirect('/admin', 303);
       }
