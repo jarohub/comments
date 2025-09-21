@@ -7,6 +7,16 @@ export default {
     const MAX_COMMENT_LENGTH = 500;
     const MODEL_ID = '@cf/meta/llama-2-7b-chat-int8';  // Modelo ligero para moderación
 
+    // Helper: Obtener y truncar IP a últimos 3 octetos (e.g., 2.3.4.5 -> 3.4.5)
+    function getTruncatedIP(request) {
+      const ip = request.headers.get('CF-Connecting-IP') || request.headers.get('X-Forwarded-For') || '0.0.0.0';
+      const parts = ip.split('.');
+      if (parts.length === 4) {
+        return parts.slice(1).join('.');  // Últimos 3: parts[1]+'.'+parts[2]+'.'+parts[3]
+      }
+      return '0.0.0';  // Fallback
+    }
+
     // Helper: Moderación con Workers AI
     async function moderateComment(commentText) {
       if (!env.AI) {
@@ -69,7 +79,7 @@ export default {
       return headers;
     }
 
-    // Helper: Fetch comments (with formatted time)
+    // Helper: Fetch comments (with formatted time, incluye ip_suffix internamente pero no lo expone)
     async function getComments() {
       const { results } = await env.DB.prepare(
         'SELECT * FROM comments ORDER BY created_at DESC'
@@ -80,6 +90,17 @@ export default {
     async function getCommentById(id) {
       const { results } = await env.DB.prepare('SELECT * FROM comments WHERE id = ?').bind(id).all();
       return results[0] ? { ...results[0], relative_time: formatRelativeTime(results[0].created_at) } : null;
+    }
+
+    // Helper: Verificar si el IP truncado coincide con el del último comentario
+    async function checkIPDuplicate(truncatedIP) {
+      const { results } = await env.DB.prepare(
+        'SELECT ip_suffix FROM comments ORDER BY created_at DESC LIMIT 1'
+      ).all();
+      if (results.length > 0 && results[0].ip_suffix === truncatedIP) {
+        return true;  // Duplicado: mismo IP que el anterior
+      }
+      return false;
     }
 
     // Helper: Public HTML (unchanged)
@@ -134,7 +155,7 @@ export default {
     function generateAdminHTML(comments, message = '', isError = false) {
       const commentsList = comments.map(c => `
         <div class="comment">
-          <strong>${c.name}</strong> (${c.relative_time})<br>
+          <strong>${c.name}</strong> (${c.relative_time}) | IP truncada: ${c.ip_suffix || 'N/A'}<br>
           ${c.comment}
           <div style="margin-top: 10px;">
             <a href="/admin/${c.id}/edit" style="color: #0066cc; text-decoration: none; margin-right: 10px;">Editar</a>
@@ -143,7 +164,7 @@ export default {
             </form>
           </div>
         </div>
-      `).join('');
+      `).join('');  // Muestra IP truncada solo en admin para debug
 
       return `
         <!DOCTYPE html>
@@ -180,7 +201,7 @@ export default {
 
     // Helper: Edit HTML (with relative time)
     function generateEditHTML(comment, message = '', isError = false) {
-      const createdInfo = `(Creado: ${comment.relative_time})`;
+      const createdInfo = `(Creado: ${comment.relative_time}) | IP: ${comment.ip_suffix || 'N/A'}`;
       return `
         <!DOCTYPE html>
         <html lang="es">
@@ -230,6 +251,7 @@ export default {
         const formData = await request.formData();
         let name = formData.get('name')?.trim();
         let comment = formData.get('comment')?.trim();
+        const truncatedIP = getTruncatedIP(request);
 
         if (!name || !comment) {
           const comments = await getComments();
@@ -244,6 +266,14 @@ export default {
           return new Response(html, { status: 400, headers: { 'Content-Type': 'text/html; charset=utf-8' } });
         }
 
+        // Verificar duplicado de IP (mismo que el comentario anterior)
+        const isIPDuplicate = await checkIPDuplicate(truncatedIP);
+        if (isIPDuplicate) {
+          const comments = await getComments();
+          const html = generatePublicHTML(comments, 'No se permiten comentarios consecutivos desde la misma IP. Espera un poco o intenta más tarde.', true);
+          return new Response(html, { status: 400, headers: { 'Content-Type': 'text/html; charset=utf-8' } });
+        }
+
         // Moderación AI para comentarios públicos
         const moderation = await moderateComment(comment);
         if (!moderation.success) {
@@ -252,8 +282,8 @@ export default {
           return new Response(html, { status: 400, headers: { 'Content-Type': 'text/html; charset=utf-8' } });
         }
 
-        // Prepared statement prevents SQL injection
-        await env.DB.prepare('INSERT INTO comments (name, comment) VALUES (?, ?)').bind(name, comment).run();
+        // Prepared statement prevents SQL injection, incluye ip_suffix
+        await env.DB.prepare('INSERT INTO comments (name, comment, ip_suffix) VALUES (?, ?, ?)').bind(name, comment, truncatedIP).run();
         return Response.redirect(new URL('/', request.url), 303);
       }
     }
@@ -300,7 +330,7 @@ export default {
         return new Response('No autorizado', { status: 401 });
       }
 
-      // GET /admin
+      // GET /admin (ahora muestra ip_suffix para admins)
       if (pathname === '/admin' && request.method === 'GET') {
         const comments = await getComments();
         const html = generateAdminHTML(comments);
@@ -316,7 +346,7 @@ export default {
         return new Response(html, { headers: { 'Content-Type': 'text/html; charset=utf-8' } });
       }
 
-      // Edit POST (con moderación opcional para admin - aquí la salto por ser admin)
+      // Edit POST (sin check de IP ni moderación para admins, no actualiza IP)
       if (pathname.match(/^\/admin\/(\d+)\/edit$/) && request.method === 'POST') {
         const id = pathname.split('/')[2];
         const formData = await request.formData();
@@ -330,7 +360,7 @@ export default {
           return new Response(html, { status: 400, headers: { 'Content-Type': 'text/html; charset=utf-8' } });
         }
 
-        // Server-side length limits
+        // Server-side length limits (sin IP check para edits)
         if (name.length > MAX_NAME_LENGTH || commentText.length > MAX_COMMENT_LENGTH) {
           const comment = await getCommentById(id);
           if (!comment) return new Response('No encontrado', { status: 404 });
@@ -338,16 +368,11 @@ export default {
           return new Response(html, { status: 400, headers: { 'Content-Type': 'text/html; charset=utf-8' } });
         }
 
-        // Moderación AI para ediciones (opcional: comenta si quieres saltarla en admin)
-        const moderation = await moderateComment(commentText);
-        if (!moderation.success) {
-          const comment = await getCommentById(id);
-          if (!comment) return new Response('No encontrado', { status: 404 });
-          const html = generateEditHTML(comment, `Edición rechazada por moderación: ${moderation.reason}.`, true);
-          return new Response(html, { status: 400, headers: { 'Content-Type': 'text/html; charset=utf-8' } });
-        }
+        // Opcional: Moderación AI para ediciones (comenta si quieres saltarla)
+        // const moderation = await moderateComment(commentText);
+        // if (!moderation.success) { ... rechazar }
 
-        // Prepared statement prevents SQL injection
+        // Prepared statement, actualiza solo name y comment (no toca ip_suffix)
         await env.DB.prepare('UPDATE comments SET name = ?, comment = ? WHERE id = ?').bind(name, commentText, id).run();
         return Response.redirect('/admin', 303);
       }
