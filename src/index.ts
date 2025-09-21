@@ -130,6 +130,7 @@ export default {
         </head>
         <body>
           <h1>Tablero de Comentarios</h1>
+           <img src="/imagenes/imagenprueba1.jpg" alt="Logo de la App" style="max-width: 200px; display: block; margin: 0 auto 20px;">
           <p><a href="/admin" style="color: #666; font-size: 0.9em;">(¿Admin? Haz clic aquí)</a></p>
           
           ${message ? `<div class="message">${message}</div>` : ''}
@@ -146,6 +147,8 @@ export default {
           
           <h2>Comentarios (${comments.length})</h2>
           ${commentsList || '<p>Aún no hay comentarios. ¡Sé el primero!</p>'}
+
+          <img src="/imagenes/imagenprueba2.jpg" alt="Logo de la App" style="max-width: 200px; display: block; margin: 0 auto 20px;">
         </body>
         </html>
       `;
