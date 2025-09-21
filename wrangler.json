@@ -15,5 +15,9 @@
   },
   "ai": {
     "binding": "AI"
+  },
+    "assets": {
+    "directory": "./imagenes",
+    "binding": "ASSETS"
   }
 }
